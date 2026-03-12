@@ -40,6 +40,12 @@ def write_json(data: dict) -> None:
     try:
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        # Preservar los permisos del archivo original (si existe) antes de reemplazarlo.
+        # mkstemp crea con 0o600; os.replace heredaría esos permisos restrictivos.
+        if JSON_PATH.exists():
+            os.chmod(tmp_path, JSON_PATH.stat().st_mode)
+        else:
+            os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, JSON_PATH)
     except Exception:
         os.unlink(tmp_path)
