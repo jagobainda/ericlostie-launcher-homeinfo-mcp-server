@@ -1,4 +1,3 @@
-import asyncio
 import datetime
 import json
 import os
@@ -6,7 +5,6 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, Any
 
-from mcp.server.stdio import stdio_server
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -22,6 +20,8 @@ mcp = FastMCP(
         "y 'notifications' (banners/alertas). Cada elemento tiene un 'id' numérico autoincremental. "
         "Usa las herramientas de este servidor para leer, añadir, editar o eliminar contenido."
     ),
+    host="127.0.0.1",
+    port=8765,
 )
 
 
@@ -330,13 +330,5 @@ def purge_expired_news() -> dict[str, Any]:
 
 
 # --- Entrypoint ---
-async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await mcp._mcp_server.run(
-            read_stream,
-            write_stream,
-            mcp._mcp_server.create_initialization_options(),
-        )
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    mcp.run(transport="sse")
