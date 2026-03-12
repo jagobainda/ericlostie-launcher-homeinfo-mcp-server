@@ -1,15 +1,25 @@
+import datetime
 import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 # --- Configuración ---
 JSON_PATH = Path(os.getenv("HOME_INFO_PATH", "/var/www/home-info/home-info.json"))
 
-mcp = FastMCP("home-info-server")
+mcp = FastMCP(
+    "home-info-server",
+    instructions=(
+        "Servidor MCP para gestionar el contenido del launcher de la intranet. "
+        "El JSON que persiste tiene dos secciones principales: 'news' (novedades/noticias) "
+        "y 'notifications' (banners/alertas). Cada elemento tiene un 'id' numérico autoincremental. "
+        "Usa las herramientas de este servidor para leer, añadir, editar o eliminar contenido."
+    ),
+)
 
 
 # --- Helpers ---
@@ -33,37 +43,95 @@ def write_json(data: dict) -> None:
         raise
 
 
+def _next_id(collection: list) -> int:
+    if not collection:
+        return 1
+    return max(item.get("id", 0) for item in collection) + 1
+
+
+def _validate_iso_date(value: str) -> bool:
+    try:
+        datetime.date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
 # --- Herramientas MCP ---
 
 @mcp.tool()
 def get_home_info() -> dict[str, Any]:
-    """Devuelve el contenido completo del JSON del launcher."""
+    """
+    Devuelve el contenido completo del JSON del launcher.
+
+    El JSON tiene la siguiente estructura:
+    {
+      "news": [ { "id": 1, "title": "...", "body": "...", "date": "YYYY-MM-DD", "expires_at": "YYYY-MM-DD|null" } ],
+      "notifications": [ { "id": 1, "message": "...", "level": "info|warning|error", "expires_at": "YYYY-MM-DD|null" } ]
+    }
+
+    Returns:
+        El objeto JSON completo tal como está almacenado.
+    """
     return read_json()
 
 
 @mcp.tool()
-def add_news(title: str, body: str, date: str | None = None, expires_days: int | None = None) -> dict[str, str]:
+def get_news() -> list[dict[str, Any]]:
+    """
+    Devuelve únicamente la lista de novedades/noticias del launcher.
+
+    Útil cuando solo necesitas consultar las noticias sin cargar el JSON completo.
+
+    Returns:
+        Lista de objetos noticia. Cada objeto tiene: id, title, body, date, expires_at.
+    """
+    return read_json().get("news", [])
+
+
+@mcp.tool()
+def get_notifications() -> list[dict[str, Any]]:
+    """
+    Devuelve únicamente la lista de notificaciones activas del launcher.
+
+    Útil cuando solo necesitas consultar las notificaciones sin cargar el JSON completo.
+
+    Returns:
+        Lista de objetos notificación. Cada objeto tiene: id, message, level, expires_at.
+    """
+    return read_json().get("notifications", [])
+
+
+@mcp.tool()
+def add_news(
+    title: Annotated[str, Field(description="Título breve y descriptivo de la novedad que verá el usuario en el launcher.")],
+    body: Annotated[str, Field(description="Cuerpo o descripción completa de la novedad. Puede incluir varios párrafos.")],
+    date: Annotated[str, Field(description="Fecha de publicación en formato ISO 8601 (ej: '2025-03-12').")],
+    expires_days: Annotated[
+        int | None,
+        Field(description="Número de días a partir de hoy tras los que la novedad expirará y podrá ser purgada. Pasa null si no debe expirar nunca.", ge=1),
+    ],
+) -> dict[str, str]:
     """
     Añade una novedad/noticia al launcher.
 
-    Args:
-        title:       Título de la novedad.
-        body:        Cuerpo o descripción.
-        date:        Fecha en formato ISO (ej: 2025-03-12). Si se omite, usa hoy.
-        expires_days: Días hasta que expira la novedad. Si se omite, no expira nunca.
+    Returns:
+        {"status": "ok", "id": "<id_asignado>"} si se creó correctamente.
+        {"status": "error", "detail": "<mensaje>"} si hay algún problema de validación.
     """
-    from datetime import date as dt_date, timedelta
+    if not _validate_iso_date(date):
+        return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-03-12')."}
 
     data = read_json()
     data.setdefault("news", [])
 
-    today = dt_date.today()
+    today = datetime.date.today()
     entry = {
         "id": _next_id(data["news"]),
         "title": title,
         "body": body,
-        "date": date or today.isoformat(),
-        "expires_at": (today + timedelta(days=expires_days)).isoformat() if expires_days else None,
+        "date": date,
+        "expires_at": (today + datetime.timedelta(days=expires_days)).isoformat() if expires_days else None,
     }
     data["news"].append(entry)
     write_json(data)
@@ -71,12 +139,58 @@ def add_news(title: str, body: str, date: str | None = None, expires_days: int |
 
 
 @mcp.tool()
-def remove_news(news_id: int) -> dict[str, str]:
+def update_news(
+    news_id: Annotated[int, Field(description="ID de la novedad que se desea modificar.")],
+    title: Annotated[str | None, Field(description="Nuevo título. Si se omite, no se modifica.")] = None,
+    body: Annotated[str | None, Field(description="Nuevo cuerpo/descripción. Si se omite, no se modifica.")] = None,
+    date: Annotated[str | None, Field(description="Nueva fecha en formato ISO 8601. Si se omite, no se modifica.")] = None,
+    expires_days: Annotated[
+        int | None,
+        Field(description="Nuevo número de días hasta expiración (calculado desde hoy). Pasa 0 para eliminar la expiración.", ge=0),
+    ] = None,
+) -> dict[str, str]:
+    """
+    Actualiza los campos de una novedad existente.
+
+    Solo se modifican los campos que se proporcionen; el resto se mantiene intacto.
+
+    Returns:
+        {"status": "ok"} si se actualizó correctamente.
+        {"status": "error", "detail": "<mensaje>"} si no se encontró la novedad o hay un error de validación.
+    """
+    if date and not _validate_iso_date(date):
+        return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-03-12')."}
+
+    data = read_json()
+    news_list = data.get("news", [])
+    for item in news_list:
+        if item.get("id") == news_id:
+            if title is not None:
+                item["title"] = title
+            if body is not None:
+                item["body"] = body
+            if date is not None:
+                item["date"] = date
+            if expires_days is not None:
+                if expires_days == 0:
+                    item["expires_at"] = None
+                else:
+                    item["expires_at"] = (datetime.date.today() + datetime.timedelta(days=expires_days)).isoformat()
+            write_json(data)
+            return {"status": "ok"}
+    return {"status": "error", "detail": f"No se encontró la novedad con id={news_id}"}
+
+
+@mcp.tool()
+def remove_news(
+    news_id: Annotated[int, Field(description="ID numérico de la novedad que se desea eliminar.")],
+) -> dict[str, str]:
     """
     Elimina una novedad por su ID.
 
-    Args:
-        news_id: ID de la novedad a eliminar.
+    Returns:
+        {"status": "ok"} si se eliminó correctamente.
+        {"status": "error", "detail": "<mensaje>"} si no se encontró la novedad.
     """
     data = read_json()
     before = len(data.get("news", []))
@@ -88,29 +202,36 @@ def remove_news(news_id: int) -> dict[str, str]:
 
 
 @mcp.tool()
-def add_notification(message: str, level: str = "info", expires_days: int | None = None) -> dict[str, str]:
+def add_notification(
+    message: Annotated[str, Field(description="Texto de la notificación que se mostrará como banner en el launcher.")],
+    level: Annotated[
+        str,
+        Field(description="Nivel de urgencia de la notificación. Valores válidos: 'info' (azul, informativo), 'warning' (amarillo, advertencia), 'error' (rojo, crítico)."),
+    ],
+    expires_days: Annotated[
+        int | None,
+        Field(description="Número de días a partir de hoy tras los que la notificación expirará. Pasa null si no debe expirar nunca.", ge=1),
+    ],
+) -> dict[str, str]:
     """
-    Añade una notificación al launcher (banners, alertas...).
+    Añade una notificación/banner al launcher.
 
-    Args:
-        message:      Texto de la notificación.
-        level:        Nivel de la notificación: 'info', 'warning' o 'error'.
-        expires_days: Días hasta que expira la notificación. Si se omite, no expira nunca.
+    Returns:
+        {"status": "ok", "id": "<id_asignado>"} si se creó correctamente.
+        {"status": "error", "detail": "<mensaje>"} si el nivel no es válido.
     """
-    from datetime import date as dt_date, timedelta
-
     if level not in ("info", "warning", "error"):
         return {"status": "error", "detail": "level debe ser 'info', 'warning' o 'error'"}
 
     data = read_json()
     data.setdefault("notifications", [])
 
-    today = dt_date.today()
+    today = datetime.date.today()
     entry = {
         "id": _next_id(data["notifications"]),
         "message": message,
         "level": level,
-        "expires_at": (today + timedelta(days=expires_days)).isoformat() if expires_days else None,
+        "expires_at": (today + datetime.timedelta(days=expires_days)).isoformat() if expires_days else None,
     }
     data["notifications"].append(entry)
     write_json(data)
@@ -118,27 +239,57 @@ def add_notification(message: str, level: str = "info", expires_days: int | None
 
 
 @mcp.tool()
+def remove_notification(
+    notification_id: Annotated[int, Field(description="ID numérico de la notificación que se desea eliminar.")],
+) -> dict[str, str]:
+    """
+    Elimina una notificación concreta por su ID.
+
+    Útil cuando quieres retirar una sola notificación sin borrar las demás.
+    Para eliminar todas a la vez, usa clear_notifications.
+
+    Returns:
+        {"status": "ok"} si se eliminó correctamente.
+        {"status": "error", "detail": "<mensaje>"} si no se encontró la notificación.
+    """
+    data = read_json()
+    before = len(data.get("notifications", []))
+    data["notifications"] = [n for n in data.get("notifications", []) if n.get("id") != notification_id]
+    if len(data["notifications"]) == before:
+        return {"status": "error", "detail": f"No se encontró la notificación con id={notification_id}"}
+    write_json(data)
+    return {"status": "ok"}
+
+
+@mcp.tool()
 def clear_notifications() -> dict[str, str]:
-    """Elimina todas las notificaciones activas."""
+    """
+    Elimina TODAS las notificaciones activas de una sola vez.
+
+    Útil para limpiar el tablón de notificaciones por completo.
+    Si solo quieres eliminar una notificación concreta, usa remove_notification.
+
+    Returns:
+        {"status": "ok"}
+    """
     data = read_json()
     data["notifications"] = []
     write_json(data)
     return {"status": "ok"}
 
 
-# --- Utilidades internas ---
-def _next_id(collection: list) -> int:
-    if not collection:
-        return 1
-    return max(item.get("id", 0) for item in collection) + 1
-
-
 @mcp.tool()
 def purge_expired_notifications() -> dict[str, Any]:
-    """Elimina todas las notificaciones cuya fecha de expiración ya ha pasado."""
-    from datetime import date as dt_date
+    """
+    Elimina automáticamente todas las notificaciones cuya fecha de expiración ya ha pasado.
 
-    today = dt_date.today().isoformat()
+    Compara el campo 'expires_at' de cada notificación con la fecha de hoy.
+    Las notificaciones sin fecha de expiración (expires_at = null) nunca se eliminan.
+
+    Returns:
+        {"status": "ok", "removed": <número_de_notificaciones_eliminadas>}
+    """
+    today = datetime.date.today().isoformat()
     data = read_json()
     before = len(data.get("notifications", []))
     data["notifications"] = [
@@ -153,12 +304,17 @@ def purge_expired_notifications() -> dict[str, Any]:
 @mcp.tool()
 def purge_expired_news() -> dict[str, Any]:
     """
-    Elimina todas las novedades cuya fecha de expiración ya ha pasado.
-    Útil para limpiar el JSON periódicamente.
-    """
-    from datetime import date as dt_date
+    Elimina automáticamente todas las novedades cuya fecha de expiración ya ha pasado.
 
-    today = dt_date.today().isoformat()
+    Compara el campo 'expires_at' de cada novedad con la fecha de hoy.
+    Las novedades sin fecha de expiración (expires_at = null) nunca se eliminan.
+    Útil para ejecutar periódicamente y mantener el JSON limpio.
+
+    Returns:
+        {"status": "ok", "removed": <número_de_novedades_eliminadas>}
+    """
+
+    today = datetime.date.today().isoformat()
     data = read_json()
     before = len(data.get("news", []))
     data["news"] = [
