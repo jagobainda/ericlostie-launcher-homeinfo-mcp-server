@@ -16,6 +16,7 @@ mcp = FastMCP(
     "home-info-server",
     instructions=(
         "Servidor MCP para gestionar el contenido de la pantalla de inicio del launcher 'Eric Lostie Launcher'. "
+        "PIDE SIEMPRE UNA CONFIRMACIÓN DEL CONTENIDO A AÑADIR ANTES DE EJECUTAR LA ACCIÓN MOSTRANDO UNA VISTA PREVIA"
         "El JSON persistido tiene dos secciones: 'news' (novedades visibles como tarjetas en el feed del launcher) "
         "y 'notifications' (banners de alerta que aparecen sobre la interfaz). "
         "Cada elemento se identifica por un GUID único en el campo 'id'. "
