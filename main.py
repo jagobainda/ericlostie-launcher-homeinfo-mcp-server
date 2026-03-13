@@ -89,21 +89,21 @@ def get_home_info() -> dict[str, Any]:
       "news": [
         {
           "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // GUID único
-          "title": "...",                                 // Título visible en el feed
-          "description": "...",                          // Cuerpo completo de la noticia
-          "tag": "...",                                  // Etiqueta (p.ej. Release, Hotfix)
-          "date": "YYYY-MM-DDTHH:MM:SS",                // Fecha de publicación
-          "expires_at": "YYYY-MM-DDTHH:MM:SS"           // Siempre presente en news
+          "title": {"es": "...", "en": "...", "eu": "...", "ca": "...", "val": "...", "gl": "...", "pt": "..."},       // Título visible en el feed (multiidioma)
+          "description": {"es": "...", "en": "...", "eu": "...", "ca": "...", "val": "...", "gl": "...", "pt": "..."},  // Cuerpo completo de la noticia (multiidioma)
+          "tag": "...",                                   // Etiqueta (p.ej. Release, Hotfix)
+          "date": "YYYY-MM-DDTHH:MM:SS",                 // Fecha de publicación
+          "expires_at": "YYYY-MM-DDTHH:MM:SS"            // Siempre presente en news
         }
       ],
       "notifications": [
         {
           "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // GUID único
-          "title": "...",                                 // Título del banner
-          "message": "...",                              // Texto completo del banner
-          "type": "Info|Warning|Error",                  // Nivel de urgencia
-          "date": "YYYY-MM-DDTHH:MM:SS",                // Fecha de la notificación
-          "expires_at": "YYYY-MM-DDTHH:MM:SS"           // Siempre presente en notifications
+          "title": {"es": "...", "en": "...", "eu": "...", "ca": "...", "val": "...", "gl": "...", "pt": "..."},   // Título del banner (multiidioma)
+          "message": {"es": "...", "en": "...", "eu": "...", "ca": "...", "val": "...", "gl": "...", "pt": "..."}, // Texto completo del banner (multiidioma)
+          "type": "Info|Warning|Error",                   // Nivel de urgencia
+          "date": "YYYY-MM-DDTHH:MM:SS",                 // Fecha de la notificación
+          "expires_at": "YYYY-MM-DDTHH:MM:SS"            // Siempre presente en notifications
         }
       ]
     }
@@ -124,7 +124,7 @@ def get_news() -> list[dict[str, Any]]:
 
     Returns:
         Lista (posiblemente vacía) de objetos noticia.
-        Cada objeto contiene: id, title, description, tag, date, expires_at.
+        Cada objeto contiene: id, title ({"es","en","eu","ca","val","gl","pt"}), description ({"es","en","eu","ca","val","gl","pt"}), tag, date, expires_at.
     """
     return read_json().get("news", [])
 
@@ -139,15 +139,27 @@ def get_notifications() -> list[dict[str, Any]]:
 
     Returns:
         Lista (posiblemente vacía) de objetos notificación.
-        Cada objeto contiene: id, title, message, type, date, expires_at.
+        Cada objeto contiene: id, title ({"es","en","eu","ca","val","gl","pt"}), message ({"es","en","eu","ca","val","gl","pt"}), type, date, expires_at.
     """
     return read_json().get("notifications", [])
 
 
 @mcp.tool()
 def add_news(
-    title: Annotated[str, Field(description="Título breve y descriptivo de la novedad (máx. una línea). Es lo primero que lee el usuario en el feed.")],
-    description: Annotated[str, Field(description="Cuerpo completo de la noticia. Puede ocupar varios párrafos. Describe qué hay de nuevo, qué cambia o por qué es relevante para el usuario.")],
+    title_es: Annotated[str, Field(description="Título breve y descriptivo de la novedad en CASTELLANO (máx. una línea).")],
+    title_en: Annotated[str, Field(description="Título breve y descriptivo de la novedad en INGLÉS (máx. una línea).")],
+    title_eu: Annotated[str, Field(description="Título breve y descriptivo de la novedad en EUSKERA (máx. una línea).")],
+    title_ca: Annotated[str, Field(description="Título breve y descriptivo de la novedad en CATALÁN (máx. una línea).")],
+    title_val: Annotated[str, Field(description="Título breve y descriptivo de la novedad en VALENCIANO (máx. una línea).")],
+    title_gl: Annotated[str, Field(description="Título breve y descriptivo de la novedad en GALLEGO (máx. una línea).")],
+    title_pt: Annotated[str, Field(description="Título breve y descriptivo de la novedad en PORTUGUÉS (máx. una línea).")],
+    description_es: Annotated[str, Field(description="Cuerpo completo de la noticia en CASTELLANO.")],
+    description_en: Annotated[str, Field(description="Cuerpo completo de la noticia en INGLÉS.")],
+    description_eu: Annotated[str, Field(description="Cuerpo completo de la noticia en EUSKERA.")],
+    description_ca: Annotated[str, Field(description="Cuerpo completo de la noticia en CATALÁN.")],
+    description_val: Annotated[str, Field(description="Cuerpo completo de la noticia en VALENCIANO.")],
+    description_gl: Annotated[str, Field(description="Cuerpo completo de la noticia en GALLEGO.")],
+    description_pt: Annotated[str, Field(description="Cuerpo completo de la noticia en PORTUGUÉS.")],
     tag: Annotated[str, Field(description="Etiqueta que categoriza la novedad. Ejemplos habituales: 'Release' (nueva versión), 'Update' (actualización menor), 'Hotfix' (corrección urgente), 'Maintenance' (mantenimiento), 'Event' (evento especial).")],
     date: Annotated[str, Field(description="Fecha y hora de publicación de la noticia en formato ISO 8601 sin zona horaria (ej: '2025-07-10T00:00:00'). Normalmente es la fecha actual o la fecha oficial del evento.")],
     expires_days: Annotated[
@@ -157,6 +169,10 @@ def add_news(
 ) -> dict[str, str]:
     """
     Publica una nueva noticia en el feed del launcher.
+
+    Los campos 'title' y 'description' se almacenan en SIETE idiomas obligatorios:
+    castellano (es), inglés (en), euskera (eu), catalán (ca), valenciano (val),
+    gallego (gl) y portugués (pt). Todas las versiones son siempre requeridas.
 
     El 'id' se genera automáticamente como GUID. El campo 'expires_at' se calcula
     a partir de 'expires_days' (medianoche del día resultante). Una vez creada,
@@ -175,8 +191,8 @@ def add_news(
 
     entry = {
         "id": str(uuid.uuid4()),
-        "title": title,
-        "description": description,
+        "title": {"es": title_es, "en": title_en, "eu": title_eu, "ca": title_ca, "val": title_val, "gl": title_gl, "pt": title_pt},
+        "description": {"es": description_es, "en": description_en, "eu": description_eu, "ca": description_ca, "val": description_val, "gl": description_gl, "pt": description_pt},
         "tag": tag,
         "date": date,
         "expires_at": _days_from_today_to_datetime(expires_days),
@@ -212,8 +228,20 @@ def remove_news(
 
 @mcp.tool()
 def add_notification(
-    title: Annotated[str, Field(description="Título breve del banner (máx. una línea). Resume el motivo de la notificación.")],
-    message: Annotated[str, Field(description="Texto completo que se mostrará en el banner. Debe ser claro y accionable: indica qué ocurre y, si aplica, qué debe hacer el usuario.")],
+    title_es: Annotated[str, Field(description="Título breve del banner en CASTELLANO (máx. una línea).")],
+    title_en: Annotated[str, Field(description="Título breve del banner en INGLÉS (máx. una línea).")],
+    title_eu: Annotated[str, Field(description="Título breve del banner en EUSKERA (máx. una línea).")],
+    title_ca: Annotated[str, Field(description="Título breve del banner en CATALÁN (máx. una línea).")],
+    title_val: Annotated[str, Field(description="Título breve del banner en VALENCIANO (máx. una línea).")],
+    title_gl: Annotated[str, Field(description="Título breve del banner en GALLEGO (máx. una línea).")],
+    title_pt: Annotated[str, Field(description="Título breve del banner en PORTUGUÉS (máx. una línea).")],
+    message_es: Annotated[str, Field(description="Texto completo que se mostrará en el banner en CASTELLANO.")],
+    message_en: Annotated[str, Field(description="Texto completo que se mostrará en el banner en INGLÉS.")],
+    message_eu: Annotated[str, Field(description="Texto completo que se mostrará en el banner en EUSKERA.")],
+    message_ca: Annotated[str, Field(description="Texto completo que se mostrará en el banner en CATALÁN.")],
+    message_val: Annotated[str, Field(description="Texto completo que se mostrará en el banner en VALENCIANO.")],
+    message_gl: Annotated[str, Field(description="Texto completo que se mostrará en el banner en GALLEGO.")],
+    message_pt: Annotated[str, Field(description="Texto completo que se mostrará en el banner en PORTUGUÉS.")],
     notification_type: Annotated[
         str,
         Field(description="Nivel de urgencia del banner. Valores permitidos: 'Info' (información general sin impacto en el juego), 'Warning' (advertencia que puede afectar la experiencia), 'Error' (problema crítico que impide o interrumpe el juego)."),
@@ -226,6 +254,10 @@ def add_notification(
 ) -> dict[str, str]:
     """
     Publica una nueva notificación/banner en el launcher.
+
+    Los campos 'title' y 'message' se almacenan en SIETE idiomas obligatorios:
+    castellano (es), inglés (en), euskera (eu), catalán (ca), valenciano (val),
+    gallego (gl) y portugués (pt). Todas las versiones son siempre requeridas.
 
     Los banners se muestran de forma prominente sobre la interfaz. Usa 'Info' para
     comunicados generales, 'Warning' para advertencias (ej: mantenimiento programado)
@@ -251,8 +283,8 @@ def add_notification(
 
     entry = {
         "id": str(uuid.uuid4()),
-        "title": title,
-        "message": message,
+        "title": {"es": title_es, "en": title_en, "eu": title_eu, "ca": title_ca, "val": title_val, "gl": title_gl, "pt": title_pt},
+        "message": {"es": message_es, "en": message_en, "eu": message_eu, "ca": message_ca, "val": message_val, "gl": message_gl, "pt": message_pt},
         "type": notification_type,
         "date": date,
         "expires_at": _days_from_today_to_datetime(expires_days),
