@@ -13,7 +13,7 @@ from pydantic import Field
 JSON_PATH = Path(os.getenv("HOME_INFO_PATH", "/var/www/home-info/home-info.json"))
 
 mcp = FastMCP(
-    "home-info-server",
+    "game-launcher-notifications-server",
     instructions=(
         "Servidor MCP para gestionar el contenido de la pantalla de inicio del launcher 'Eric Lostie Launcher'. "
         "PIDE SIEMPRE UNA CONFIRMACIÓN DEL CONTENIDO A AÑADIR ANTES DE EJECUTAR LA ACCIÓN MOSTRANDO UNA VISTA PREVIA"
