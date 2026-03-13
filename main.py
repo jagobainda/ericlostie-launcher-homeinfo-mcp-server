@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
-
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
@@ -16,10 +15,15 @@ JSON_PATH = Path(os.getenv("HOME_INFO_PATH", "/var/www/home-info/home-info.json"
 mcp = FastMCP(
     "home-info-server",
     instructions=(
-        "Servidor MCP para gestionar las novedades y alertas que va a consumir un launcher de juegos. "
-        "El JSON que persiste tiene dos secciones principales: 'news' (novedades/noticias) "
-        "y 'notifications' (alertas). Cada elemento tiene un 'id' de tipo GUID. "
-        "Usa las herramientas de este servidor para leer, añadir, editar o eliminar contenido."
+        "Servidor MCP para gestionar el contenido de la pantalla de inicio del launcher 'Eric Lostie Launcher'. "
+        "El JSON persistido tiene dos secciones: 'news' (novedades visibles como tarjetas en el feed del launcher) "
+        "y 'notifications' (banners de alerta que aparecen sobre la interfaz). "
+        "Cada elemento se identifica por un GUID único en el campo 'id'. "
+        "Tanto las 'news' como las 'notifications' tienen expiración obligatoria. "
+        "Flujo habitual: usar add_news o add_notification para publicar contenido, "
+        "remove_news / remove_notification para retirar uno concreto, "
+        "y purge_expired_news / purge_expired_notifications para limpiar los caducados de forma masiva. "
+        "Ante cualquier duda sobre el contenido actual, llama primero a get_home_info."
     ),
     host="127.0.0.1",
     port=8765,
@@ -41,8 +45,6 @@ def write_json(data: dict) -> None:
     try:
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        # Preservar los permisos del archivo original (si existe) antes de reemplazarlo.
-        # mkstemp crea con 0o600; os.replace heredaría esos permisos restrictivos.
         if JSON_PATH.exists():
             os.chmod(tmp_path, JSON_PATH.stat().st_mode)
         else:
@@ -76,34 +78,38 @@ def _days_from_today_to_datetime(days: int) -> str:
 @mcp.tool()
 def get_home_info() -> dict[str, Any]:
     """
-    Devuelve el contenido completo del JSON del launcher.
+    Devuelve el contenido completo del JSON del launcher: tanto 'news' como 'notifications'.
 
-    El JSON tiene la siguiente estructura:
+    Úsala como punto de partida para conocer el estado actual antes de añadir, eliminar
+    o purgar contenido. Evita llamar a get_news y get_notifications por separado si
+    necesitas ambas secciones a la vez.
+
+    Estructura del JSON devuelto:
     {
       "news": [
         {
-          "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-          "title": "...",
-          "description": "...",
-          "tag": "...",
-          "date": "YYYY-MM-DDTHH:MM:SS",
-          "expires_at": "YYYY-MM-DDTHH:MM:SS|null"
+          "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // GUID único
+          "title": "...",                                 // Título visible en el feed
+          "description": "...",                          // Cuerpo completo de la noticia
+          "tag": "...",                                  // Etiqueta (p.ej. Release, Hotfix)
+          "date": "YYYY-MM-DDTHH:MM:SS",                // Fecha de publicación
+          "expires_at": "YYYY-MM-DDTHH:MM:SS"           // Siempre presente en news
         }
       ],
       "notifications": [
         {
-          "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-          "title": "...",
-          "message": "...",
-          "type": "Info|Warning|Error",
-          "date": "YYYY-MM-DDTHH:MM:SS",
-          "expires_at": "YYYY-MM-DDTHH:MM:SS|null"
+          "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // GUID único
+          "title": "...",                                 // Título del banner
+          "message": "...",                              // Texto completo del banner
+          "type": "Info|Warning|Error",                  // Nivel de urgencia
+          "date": "YYYY-MM-DDTHH:MM:SS",                // Fecha de la notificación
+          "expires_at": "YYYY-MM-DDTHH:MM:SS"           // Siempre presente en notifications
         }
       ]
     }
 
     Returns:
-        El objeto JSON completo tal como está almacenado.
+        El objeto JSON completo tal como está almacenado en disco.
     """
     return read_json()
 
@@ -111,12 +117,14 @@ def get_home_info() -> dict[str, Any]:
 @mcp.tool()
 def get_news() -> list[dict[str, Any]]:
     """
-    Devuelve únicamente la lista de novedades/noticias del launcher.
+    Devuelve únicamente la lista de novedades ('news') del launcher.
 
-    Útil cuando solo necesitas consultar las noticias sin cargar el JSON completo.
+    Úsala cuando solo necesites consultar o razonar sobre las noticias,
+    sin necesitar los datos de notificaciones.
 
     Returns:
-        Lista de objetos noticia. Cada objeto tiene: id, title, description, tag, date, expires_at.
+        Lista (posiblemente vacía) de objetos noticia.
+        Cada objeto contiene: id, title, description, tag, date, expires_at.
     """
     return read_json().get("news", [])
 
@@ -124,33 +132,40 @@ def get_news() -> list[dict[str, Any]]:
 @mcp.tool()
 def get_notifications() -> list[dict[str, Any]]:
     """
-    Devuelve únicamente la lista de notificaciones activas del launcher.
+    Devuelve únicamente la lista de notificaciones del launcher.
 
-    Útil cuando solo necesitas consultar las notificaciones sin cargar el JSON completo.
+    Úsala cuando solo necesites consultar o razonar sobre las notificaciones,
+    sin necesitar los datos de noticias.
 
     Returns:
-        Lista de objetos notificación. Cada objeto tiene: id, title, message, type, date, expires_at.
+        Lista (posiblemente vacía) de objetos notificación.
+        Cada objeto contiene: id, title, message, type, date, expires_at.
     """
     return read_json().get("notifications", [])
 
 
 @mcp.tool()
 def add_news(
-    title: Annotated[str, Field(description="Título breve y descriptivo de la novedad que verá el usuario en el launcher.")],
-    description: Annotated[str, Field(description="Descripción completa de la novedad. Puede incluir varios párrafos.")],
-    tag: Annotated[str, Field(description="Etiqueta o categoría de la novedad (ej: 'Release', 'Update', 'Hotfix').")],
-    date: Annotated[str, Field(description="Fecha y hora de publicación en formato ISO 8601 (ej: '2025-07-10T00:00:00').")],
+    title: Annotated[str, Field(description="Título breve y descriptivo de la novedad (máx. una línea). Es lo primero que lee el usuario en el feed.")],
+    description: Annotated[str, Field(description="Cuerpo completo de la noticia. Puede ocupar varios párrafos. Describe qué hay de nuevo, qué cambia o por qué es relevante para el usuario.")],
+    tag: Annotated[str, Field(description="Etiqueta que categoriza la novedad. Ejemplos habituales: 'Release' (nueva versión), 'Update' (actualización menor), 'Hotfix' (corrección urgente), 'Maintenance' (mantenimiento), 'Event' (evento especial).")],
+    date: Annotated[str, Field(description="Fecha y hora de publicación de la noticia en formato ISO 8601 sin zona horaria (ej: '2025-07-10T00:00:00'). Normalmente es la fecha actual o la fecha oficial del evento.")],
     expires_days: Annotated[
-        int | None,
-        Field(description="Número de días a partir de hoy tras los que la novedad expirará y podrá ser purgada. Pasa null si no debe expirar nunca.", ge=1),
+        int,
+        Field(description="Número de días a partir de HOY tras los que la noticia expirará. Mínimo 1. La fecha resultante se calculará automáticamente como medianoche del día (hoy + expires_days). Es obligatorio: toda noticia debe tener fecha de caducidad.", ge=1),
     ],
 ) -> dict[str, str]:
     """
-    Añade una novedad/noticia al launcher.
+    Publica una nueva noticia en el feed del launcher.
+
+    El 'id' se genera automáticamente como GUID. El campo 'expires_at' se calcula
+    a partir de 'expires_days' (medianoche del día resultante). Una vez creada,
+    la noticia no se puede editar; si necesitas corregirla, elimínala con remove_news
+    y vuelve a crearla.
 
     Returns:
-        {"status": "ok", "id": "<id_asignado>"} si se creó correctamente.
-        {"status": "error", "detail": "<mensaje>"} si hay algún problema de validación.
+        {"status": "ok", "id": "<guid_asignado>"} si se publicó correctamente.
+        {"status": "error", "detail": "<motivo>"} si la fecha no tiene formato válido.
     """
     if not _validate_iso_datetime(date):
         return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-07-10T00:00:00')."}
@@ -164,7 +179,7 @@ def add_news(
         "description": description,
         "tag": tag,
         "date": date,
-        "expires_at": _days_from_today_to_datetime(expires_days) if expires_days else None,
+        "expires_at": _days_from_today_to_datetime(expires_days),
     }
     data["news"].append(entry)
     write_json(data)
@@ -172,61 +187,19 @@ def add_news(
 
 
 @mcp.tool()
-def update_news(
-    news_id: Annotated[str, Field(description="GUID de la novedad que se desea modificar.")],
-    title: Annotated[str | None, Field(description="Nuevo título. Si se omite, no se modifica.")] = None,
-    description: Annotated[str | None, Field(description="Nueva descripción. Si se omite, no se modifica.")] = None,
-    tag: Annotated[str | None, Field(description="Nueva etiqueta/categoría. Si se omite, no se modifica.")] = None,
-    date: Annotated[str | None, Field(description="Nueva fecha en formato ISO 8601 (ej: '2025-07-10T00:00:00'). Si se omite, no se modifica.")] = None,
-    expires_days: Annotated[
-        int | None,
-        Field(description="Nuevo número de días hasta expiración (calculado desde hoy). Pasa 0 para eliminar la expiración.", ge=0),
-    ] = None,
-) -> dict[str, str]:
-    """
-    Actualiza los campos de una novedad existente.
-
-    Solo se modifican los campos que se proporcionen; el resto se mantiene intacto.
-
-    Returns:
-        {"status": "ok"} si se actualizó correctamente.
-        {"status": "error", "detail": "<mensaje>"} si no se encontró la novedad o hay un error de validación.
-    """
-    if date and not _validate_iso_datetime(date):
-        return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-07-10T00:00:00')."}
-
-    data = read_json()
-    news_list = data.get("news", [])
-    for item in news_list:
-        if item.get("id") == news_id:
-            if title is not None:
-                item["title"] = title
-            if description is not None:
-                item["description"] = description
-            if tag is not None:
-                item["tag"] = tag
-            if date is not None:
-                item["date"] = date
-            if expires_days is not None:
-                if expires_days == 0:
-                    item["expires_at"] = None
-                else:
-                    item["expires_at"] = _days_from_today_to_datetime(expires_days)
-            write_json(data)
-            return {"status": "ok"}
-    return {"status": "error", "detail": f"No se encontró la novedad con id={news_id}"}
-
-
-@mcp.tool()
 def remove_news(
-    news_id: Annotated[str, Field(description="GUID de la novedad que se desea eliminar.")],
+    news_id: Annotated[str, Field(description="GUID de la noticia que se desea eliminar. Obtenlo previamente con get_news o get_home_info.")],
 ) -> dict[str, str]:
     """
-    Elimina una novedad por su ID.
+    Elimina una noticia concreta del feed por su GUID.
+
+    Úsala cuando necesites retirar una noticia específica antes de que expire,
+    o para corregirla (eliminar + volver a crear con add_news).
+    Para limpiar en masa las noticias caducadas, usa purge_expired_news en su lugar.
 
     Returns:
         {"status": "ok"} si se eliminó correctamente.
-        {"status": "error", "detail": "<mensaje>"} si no se encontró la novedad.
+        {"status": "error", "detail": "<motivo>"} si el GUID no existe.
     """
     data = read_json()
     before = len(data.get("news", []))
@@ -239,27 +212,36 @@ def remove_news(
 
 @mcp.tool()
 def add_notification(
-    title: Annotated[str, Field(description="Título breve de la notificación que se mostrará en el launcher.")],
-    message: Annotated[str, Field(description="Texto completo de la notificación que se mostrará como banner en el launcher.")],
-    type: Annotated[
+    title: Annotated[str, Field(description="Título breve del banner (máx. una línea). Resume el motivo de la notificación.")],
+    message: Annotated[str, Field(description="Texto completo que se mostrará en el banner. Debe ser claro y accionable: indica qué ocurre y, si aplica, qué debe hacer el usuario.")],
+    notification_type: Annotated[
         str,
-        Field(description="Nivel de urgencia de la notificación. Valores válidos: 'Info' (informativo), 'Warning' (advertencia), 'Error' (crítico)."),
+        Field(description="Nivel de urgencia del banner. Valores permitidos: 'Info' (información general sin impacto en el juego), 'Warning' (advertencia que puede afectar la experiencia), 'Error' (problema crítico que impide o interrumpe el juego)."),
     ],
-    date: Annotated[str, Field(description="Fecha y hora de la notificación en formato ISO 8601 (ej: '2025-07-10T00:00:00').")],
+    date: Annotated[str, Field(description="Fecha y hora de la notificación en formato ISO 8601 sin zona horaria (ej: '2025-07-10T00:00:00'). Normalmente es el momento en que se detecta o se comunica el evento.")],
     expires_days: Annotated[
-        int | None,
-        Field(description="Número de días a partir de hoy tras los que la notificación expirará. Pasa null si no debe expirar nunca.", ge=1),
+        int,
+        Field(description="Número de días a partir de HOY tras los que la notificación expirará. Mínimo 1. La fecha resultante se calculará automáticamente como medianoche del día (hoy + expires_days). Es obligatorio: toda notificación debe tener fecha de caducidad.", ge=1),
     ],
 ) -> dict[str, str]:
     """
-    Añade una notificación/banner al launcher.
+    Publica una nueva notificación/banner en el launcher.
+
+    Los banners se muestran de forma prominente sobre la interfaz. Usa 'Info' para
+    comunicados generales, 'Warning' para advertencias (ej: mantenimiento programado)
+    y 'Error' para incidencias críticas (ej: servidores caídos).
+
+    El 'id' se genera automáticamente. El campo 'expires_at' se calcula
+    a partir de 'expires_days' (medianoche del día resultante). Una vez creada,
+    la notificación no se puede editar; si necesitas corregirla, elimínala con
+    remove_notification y vuelve a crearla.
 
     Returns:
-        {"status": "ok", "id": "<id_asignado>"} si se creó correctamente.
-        {"status": "error", "detail": "<mensaje>"} si el tipo o la fecha no son válidos.
+        {"status": "ok", "id": "<guid_asignado>"} si se publicó correctamente.
+        {"status": "error", "detail": "<motivo>"} si el tipo o la fecha no son válidos.
     """
-    if type not in ("Info", "Warning", "Error"):
-        return {"status": "error", "detail": "type debe ser 'Info', 'Warning' o 'Error'"}
+    if notification_type not in ("Info", "Warning", "Error"):
+        return {"status": "error", "detail": "notification_type debe ser 'Info', 'Warning' o 'Error'"}
 
     if not _validate_iso_datetime(date):
         return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-07-10T00:00:00')."}
@@ -271,9 +253,9 @@ def add_notification(
         "id": str(uuid.uuid4()),
         "title": title,
         "message": message,
-        "type": type,
+        "type": notification_type,
         "date": date,
-        "expires_at": _days_from_today_to_datetime(expires_days) if expires_days else None,
+        "expires_at": _days_from_today_to_datetime(expires_days),
     }
     data["notifications"].append(entry)
     write_json(data)
@@ -281,66 +263,19 @@ def add_notification(
 
 
 @mcp.tool()
-def update_notification(
-    notification_id: Annotated[str, Field(description="GUID de la notificación que se desea modificar.")],
-    title: Annotated[str | None, Field(description="Nuevo título. Si se omite, no se modifica.")] = None,
-    message: Annotated[str | None, Field(description="Nuevo mensaje. Si se omite, no se modifica.")] = None,
-    type: Annotated[str | None, Field(description="Nuevo tipo: 'Info', 'Warning' o 'Error'. Si se omite, no se modifica.")] = None,
-    date: Annotated[str | None, Field(description="Nueva fecha en formato ISO 8601 (ej: '2025-07-10T00:00:00'). Si se omite, no se modifica.")] = None,
-    expires_days: Annotated[
-        int | None,
-        Field(description="Nuevo número de días hasta expiración (calculado desde hoy). Pasa 0 para eliminar la expiración.", ge=0),
-    ] = None,
-) -> dict[str, str]:
-    """
-    Actualiza los campos de una notificación existente.
-
-    Solo se modifican los campos que se proporcionen; el resto se mantiene intacto.
-
-    Returns:
-        {"status": "ok"} si se actualizó correctamente.
-        {"status": "error", "detail": "<mensaje>"} si no se encontró la notificación o hay un error de validación.
-    """
-    if type is not None and type not in ("Info", "Warning", "Error"):
-        return {"status": "error", "detail": "type debe ser 'Info', 'Warning' o 'Error'"}
-
-    if date and not _validate_iso_datetime(date):
-        return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-07-10T00:00:00')."}
-
-    data = read_json()
-    for item in data.get("notifications", []):
-        if item.get("id") == notification_id:
-            if title is not None:
-                item["title"] = title
-            if message is not None:
-                item["message"] = message
-            if type is not None:
-                item["type"] = type
-            if date is not None:
-                item["date"] = date
-            if expires_days is not None:
-                if expires_days == 0:
-                    item["expires_at"] = None
-                else:
-                    item["expires_at"] = _days_from_today_to_datetime(expires_days)
-            write_json(data)
-            return {"status": "ok"}
-    return {"status": "error", "detail": f"No se encontró la notificación con id={notification_id}"}
-
-
-@mcp.tool()
 def remove_notification(
-    notification_id: Annotated[str, Field(description="GUID de la notificación que se desea eliminar.")],
+    notification_id: Annotated[str, Field(description="GUID de la notificación que se desea eliminar. Obtenlo previamente con get_notifications o get_home_info.")],
 ) -> dict[str, str]:
     """
-    Elimina una notificación concreta por su ID.
+    Elimina una notificación concreta por su GUID.
 
-    Útil cuando quieres retirar una sola notificación sin borrar las demás.
-    Para eliminar todas a la vez, usa clear_notifications.
+    Úsala cuando necesites retirar un banner específico (ej: la incidencia ya se resolvió).
+    Para eliminar TODAS las notificaciones de golpe usa clear_notifications.
+    Para eliminar solo las caducadas usa purge_expired_notifications.
 
     Returns:
         {"status": "ok"} si se eliminó correctamente.
-        {"status": "error", "detail": "<mensaje>"} si no se encontró la notificación.
+        {"status": "error", "detail": "<motivo>"} si el GUID no existe.
     """
     data = read_json()
     before = len(data.get("notifications", []))
@@ -354,13 +289,14 @@ def remove_notification(
 @mcp.tool()
 def clear_notifications() -> dict[str, str]:
     """
-    Elimina TODAS las notificaciones activas de una sola vez.
+    Elimina TODAS las notificaciones activas de una sola vez, independientemente de su fecha de expiración.
 
-    Útil para limpiar el tablón de notificaciones por completo.
-    Si solo quieres eliminar una notificación concreta, usa remove_notification.
+    Úsala para limpiar el tablón completamente (ej: tras resolver una incidencia mayor
+    que generó varios banners). Si solo quieres eliminar una notificación concreta,
+    usa remove_notification. Si solo quieres eliminar las caducadas, usa purge_expired_notifications.
 
     Returns:
-        {"status": "ok"}
+        {"status": "ok"} siempre (aunque no hubiera ninguna notificación).
     """
     data = read_json()
     data["notifications"] = []
@@ -371,13 +307,14 @@ def clear_notifications() -> dict[str, str]:
 @mcp.tool()
 def purge_expired_notifications() -> dict[str, Any]:
     """
-    Elimina automáticamente todas las notificaciones cuya fecha de expiración ya ha pasado.
+    Elimina todas las notificaciones cuya fecha 'expires_at' es anterior al momento actual.
 
-    Compara el campo 'expires_at' de cada notificación con el datetime actual.
-    Las notificaciones sin fecha de expiración (expires_at = null) nunca se eliminan.
+    Operación de mantenimiento segura: solo borra las caducadas, nunca las que aún
+    están vigentes. Úsala periódicamente para mantener limpia la lista de notificaciones
+    sin intervención manual elemento a elemento.
 
     Returns:
-        {"status": "ok", "removed": <número_de_notificaciones_eliminadas>}
+        {"status": "ok", "removed": <n>} donde 'removed' es el número de notificaciones eliminadas (puede ser 0).
     """
     now = datetime.datetime.now().replace(microsecond=0).isoformat()
     data = read_json()
@@ -394,14 +331,14 @@ def purge_expired_notifications() -> dict[str, Any]:
 @mcp.tool()
 def purge_expired_news() -> dict[str, Any]:
     """
-    Elimina automáticamente todas las novedades cuya fecha de expiración ya ha pasado.
+    Elimina todas las noticias cuya fecha 'expires_at' es anterior al momento actual.
 
-    Compara el campo 'expires_at' de cada novedad con el datetime actual.
-    Las novedades sin fecha de expiración (expires_at = null) nunca se eliminan.
-    Útil para ejecutar periódicamente y mantener el JSON limpio.
+    Operación de mantenimiento segura: solo borra las noticias caducadas, nunca las vigentes.
+    Dado que toda noticia tiene 'expires_at' obligatorio, esta herramienta es la forma
+    recomendada de limpiar el feed de forma masiva sin tener que borrar cada noticia a mano.
 
     Returns:
-        {"status": "ok", "removed": <número_de_novedades_eliminadas>}
+        {"status": "ok", "removed": <n>} donde 'removed' es el número de noticias eliminadas (puede ser 0).
     """
     now = datetime.datetime.now().replace(microsecond=0).isoformat()
     data = read_json()
