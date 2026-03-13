@@ -2,6 +2,7 @@ import datetime
 import json
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -15,9 +16,9 @@ JSON_PATH = Path(os.getenv("HOME_INFO_PATH", "/var/www/home-info/home-info.json"
 mcp = FastMCP(
     "home-info-server",
     instructions=(
-        "Servidor MCP para gestionar el contenido del launcher de la intranet. "
+        "Servidor MCP para gestionar las novedades y alertas que va a consumir un launcher de juegos. "
         "El JSON que persiste tiene dos secciones principales: 'news' (novedades/noticias) "
-        "y 'notifications' (banners/alertas). Cada elemento tiene un 'id' numérico autoincremental. "
+        "y 'notifications' (alertas). Cada elemento tiene un 'id' de tipo GUID. "
         "Usa las herramientas de este servidor para leer, añadir, editar o eliminar contenido."
     ),
     host="127.0.0.1",
@@ -52,12 +53,6 @@ def write_json(data: dict) -> None:
         raise
 
 
-def _next_id(collection: list) -> int:
-    if not collection:
-        return 1
-    return max(item.get("id", 0) for item in collection) + 1
-
-
 def _validate_iso_date(value: str) -> bool:
     try:
         datetime.date.fromisoformat(value)
@@ -75,8 +70,8 @@ def get_home_info() -> dict[str, Any]:
 
     El JSON tiene la siguiente estructura:
     {
-      "news": [ { "id": 1, "title": "...", "body": "...", "date": "YYYY-MM-DD", "expires_at": "YYYY-MM-DD|null" } ],
-      "notifications": [ { "id": 1, "message": "...", "level": "info|warning|error", "expires_at": "YYYY-MM-DD|null" } ]
+      "news": [ { "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "title": "...", "body": "...", "date": "YYYY-MM-DD", "expires_at": "YYYY-MM-DD|null" } ],
+      "notifications": [ { "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "message": "...", "level": "info|warning|error", "expires_at": "YYYY-MM-DD|null" } ]
     }
 
     Returns:
@@ -136,7 +131,7 @@ def add_news(
 
     today = datetime.date.today()
     entry = {
-        "id": _next_id(data["news"]),
+        "id": str(uuid.uuid4()),
         "title": title,
         "body": body,
         "date": date,
@@ -149,7 +144,7 @@ def add_news(
 
 @mcp.tool()
 def update_news(
-    news_id: Annotated[int, Field(description="ID de la novedad que se desea modificar.")],
+    news_id: Annotated[str, Field(description="GUID de la novedad que se desea modificar.")],
     title: Annotated[str | None, Field(description="Nuevo título. Si se omite, no se modifica.")] = None,
     body: Annotated[str | None, Field(description="Nuevo cuerpo/descripción. Si se omite, no se modifica.")] = None,
     date: Annotated[str | None, Field(description="Nueva fecha en formato ISO 8601. Si se omite, no se modifica.")] = None,
@@ -192,7 +187,7 @@ def update_news(
 
 @mcp.tool()
 def remove_news(
-    news_id: Annotated[int, Field(description="ID numérico de la novedad que se desea eliminar.")],
+    news_id: Annotated[str, Field(description="GUID de la novedad que se desea eliminar.")],
 ) -> dict[str, str]:
     """
     Elimina una novedad por su ID.
@@ -237,7 +232,7 @@ def add_notification(
 
     today = datetime.date.today()
     entry = {
-        "id": _next_id(data["notifications"]),
+        "id": str(uuid.uuid4()),
         "message": message,
         "level": level,
         "expires_at": (today + datetime.timedelta(days=expires_days)).isoformat() if expires_days else None,
@@ -249,7 +244,7 @@ def add_notification(
 
 @mcp.tool()
 def remove_notification(
-    notification_id: Annotated[int, Field(description="ID numérico de la notificación que se desea eliminar.")],
+    notification_id: Annotated[str, Field(description="GUID de la notificación que se desea eliminar.")],
 ) -> dict[str, str]:
     """
     Elimina una notificación concreta por su ID.
