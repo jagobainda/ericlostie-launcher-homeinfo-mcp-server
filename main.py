@@ -101,7 +101,7 @@ def get_home_info() -> dict[str, Any]:
           "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  // GUID único
           "title": {"es": "...", "en": "...", "eu": "...", "ca": "...", "val": "...", "gl": "...", "pt": "..."},   // Título del banner (multiidioma)
           "message": {"es": "...", "en": "...", "eu": "...", "ca": "...", "val": "...", "gl": "...", "pt": "..."}, // Texto completo del banner (multiidioma)
-          "type": "Info|Warning|Error",                   // Nivel de urgencia
+          "type": "Info|Warning|Exclamation",                // Nivel de urgencia
           "date": "YYYY-MM-DDTHH:MM:SS",                 // Fecha de la notificación
           "expires_at": "YYYY-MM-DDTHH:MM:SS"            // Siempre presente en notifications
         }
@@ -244,7 +244,7 @@ def add_notification(
     message_pt: Annotated[str, Field(description="Texto completo que se mostrará en el banner en PORTUGUÉS.")],
     notification_type: Annotated[
         str,
-        Field(description="Nivel de urgencia del banner. Valores permitidos: 'Info' (información general sin impacto en el juego), 'Warning' (advertencia que puede afectar la experiencia), 'Error' (problema crítico que impide o interrumpe el juego)."),
+        Field(description="Nivel de urgencia del banner. Valores permitidos: 'Info' (información general sin impacto en el juego), 'Warning' (advertencia que puede afectar la experiencia), 'Exclamation' (problema crítico que impide o interrumpe el juego)."),
     ],
     date: Annotated[str, Field(description="Fecha y hora de la notificación en formato ISO 8601 sin zona horaria (ej: '2025-07-10T00:00:00'). Normalmente es el momento en que se detecta o se comunica el evento.")],
     expires_days: Annotated[
@@ -272,8 +272,8 @@ def add_notification(
         {"status": "ok", "id": "<guid_asignado>"} si se publicó correctamente.
         {"status": "error", "detail": "<motivo>"} si el tipo o la fecha no son válidos.
     """
-    if notification_type not in ("Info", "Warning", "Error"):
-        return {"status": "error", "detail": "notification_type debe ser 'Info', 'Warning' o 'Error'"}
+    if notification_type not in ("Info", "Warning", "Exclamation"):
+        return {"status": "error", "detail": "notification_type debe ser 'Info', 'Warning' o 'Exclamation'"}
 
     if not _validate_iso_datetime(date):
         return {"status": "error", "detail": f"El formato de fecha '{date}' no es válido. Usa ISO 8601 (ej: '2025-07-10T00:00:00')."}
